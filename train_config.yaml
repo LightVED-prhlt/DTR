@@ -1,0 +1,47 @@
+# Configuración reorganizada por apartados
+seed: 42
+
+model:
+  name: deit_small
+  pretrained: true
+  checkpoint_path: ""
+  image_size: 224
+
+run:
+  batch_size: 256
+  lr: 1.e-5
+  max_epochs: 30
+  can_tokens_revive: false
+  simulate_revival: true
+  wandb_project: "TokenAdaptation"
+  log_every_n_steps: 50
+  accumulate_grad_batches: 4
+  val_check_interval: 0.25
+  distill:
+    mode: "none"
+    weight: 0.5
+    temp: 4.0
+
+
+pruning:
+  prune_ratio: 0.7
+  pruning_criterion: C2
+
+revival:
+  revive_ratio: 0.15
+  revival_criterion: C4
+  # revive_ratio_list: [196, 196, 196, 137, 137, 137, 96, 96, 96, 67, 67, 67] # Número de tokens a revivir por capa
+
+dataset:
+  name: imagenet1k
+  data_dir: /home/Data/datasets/imagenet1k/
+
+mixup:
+  mixup_alpha: 0.8
+  cutmix_alpha: 1.0
+  cutmix_minmax: null
+  prob: 1.0
+  switch_prob: 0.5
+  mode: batch
+  label_smoothing: 0.1
+  num_classes: 1000

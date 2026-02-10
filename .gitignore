@@ -1,0 +1,20 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Lightning logs and checkpoints, WandB files
+lightning_logs/
+checkpoints/
+wandb_logs/
+
+# Extension files
+*.pdf
+*.csv
+*.png

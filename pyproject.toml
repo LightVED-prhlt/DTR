@@ -1,0 +1,30 @@
+[project]
+name = "rtp"
+version = "0.1.0"
+description = "A library for reversible token pruning in transformer models."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "cosine-annealing-warmup",
+    "lightning>=2.6.0",
+    "litmodels>=0.1.8",
+    "matplotlib>=3.10.8",
+    "numpy>=2.2.6",
+    "pandas>=2.3.3",
+    "prettytable>=3.17.0",
+    "pytorch-lightning>=1.9.5",
+    "pyyaml>=6.0.3",
+    "rich>=14.2.0",
+    "scikit-learn>=1.7.2",
+    "tabulate>=0.9.0",
+    "termcolor>=3.2.0",
+    "thop>=0.1.1.post2209072238",
+    "timm>=1.0.22",
+    "torch>=2.9.1",
+    "torchmetrics>=1.8.2",
+    "torchvision>=0.24.1",
+    "wandb>=0.23.1",
+]
+
+[tool.uv.sources]
+cosine-annealing-warmup = { git = "https://github.com/katsura-jp/pytorch-cosine-annealing-with-warmup" }
