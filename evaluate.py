@@ -6,6 +6,7 @@ import warnings
 import time
 import numpy as np
 import pandas as pd
+import polars as pl
 
 from typing import Any, List
 from numbers import Number
@@ -43,6 +44,9 @@ logging.getLogger("lightning.fabric").setLevel(logging.ERROR)
 warnings.filterwarnings("ignore")
 
 torch.set_float32_matmul_precision('medium')
+
+pl.Config.set_tbl_rows(-1)
+pl.Config.set_tbl_cols(-1)
 
 # ----------------------------------------
 # Lightning Module principal
@@ -328,37 +332,24 @@ def main(config, calc_flops: bool = False, calc_throughput: bool = False, calc_t
 # ----------------------------------------
 # CLI
 # ----------------------------------------
-def get_tokens_per_block(pruning_ratio, revive_ratio):
-    N_TOKENS_INIT = 196
-    n_tokens_alive = N_TOKENS_INIT
-    n_tokens_dead = 0
-    tokens_per_block = []
-    for _ in range(12):
-        # Pruning
-        n_tokens_alive = int((pruning_ratio * n_tokens_alive).round())
-        n_tokens_dead = N_TOKENS_INIT - n_tokens_alive
+TOKENS_PER_BLOCK = {
+    0.5: {
+        "stepwise": [196,196,196,98,98,98,49,49,49,25,25,25],
+        "linear": [196,180,165,149,134,118,103,87,72,56,41,25],
+        "exponential": [196,163,135,112,93,77,64,53,44,36,30,25],
+    },
+    0.6: {
+        "stepwise": [196,196,196,118,118,118,71,71,71,43,43,43],
+        "linear": [196,182,168,154,140,126,113,99,85,71,57,43],
+        "exponential": [196,171,149,130,113,98,86,75,65,57,49,43],
+    },
+    0.7: {
+        "stepwise": [196,196,196,137,137,137,96,96,96,67,67,67],
+        "linear": [196,184,173,161,149,137,126,114,102,90,79,67],
+        "exponential": [196,178,161,146,133,120,109,99,90,81,74,67],
+    }
+}
 
-        # Revival
-        n_tokens_alive += int((revive_ratio * n_tokens_dead).round())
-        n_tokens_dead = N_TOKENS_INIT - n_tokens_alive
-
-        tokens_per_block.append(int(n_tokens_alive))
-    return tokens_per_block
-
-def get_tokens_per_block_with_pruning_loc(pruning_ratio, pruning_locs, n_blocks=12):
-    N_TOKENS_INIT = 196
-    tokens_per_block = []
-
-    pruning_locs = tuple(pruning_locs)  # por si viene como lista
-
-    for block_idx in range(n_blocks):
-        # cuántos puntos de pruning ya hemos pasado
-        num_prunings = sum(block_idx >= loc for loc in pruning_locs)
-
-        tokens = N_TOKENS_INIT * (pruning_ratio ** num_prunings)
-        tokens_per_block.append(int(round(tokens)))
-
-    return tokens_per_block
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train TokenAdaptation from YAML config")
@@ -369,109 +360,89 @@ if __name__ == "__main__":
         config = yaml.safe_load(f)
         mode = config['run']['mode']
 
-    # print(get_tokens_per_block(np.array(0.7), np.array(0.15)))
-    # config['pruning']['prune_ratio'] = [146, 116, 98, 88, 82, 78, 76, 74, 74, 74, 74, 74]
-    # acc1 = main(config, calc_flops=False, calc_throughput=False, calc_token_stats=False)
-    # print(f"\n🔥 Accuracy Top-1: {acc1 * 100:.3f}%")
-        
     if mode == 'inference only':
         acc1 = main(config, calc_flops=False, calc_throughput=False, calc_token_stats=False)
-        print(f"\n🔥 Accuracy Top-1: {acc1 * 100:.3f}%")
+        print(f"\n🔥 Accuracy Top-1: {acc1 * 100:.3f}%\n")
 
-    elif mode == 'dtr grid search':
-        # Asegurar que los tokens puedan revivir
-        config['run']['can_tokens_revive'] = True
+    elif mode == 'selection policy evaluation':
+        pruning_schedule = 'stepwise'
+        budget_target = 0.7
+        tokens_per_block_scheme = TOKENS_PER_BLOCK[budget_target][pruning_schedule]
+        best_hold_percent, best_acc1 = None, 0.
+        for hold_percent in range(75, 100, 1):
+            config['pruning']['prune_ratio'] = [round(tokens * hold_percent / 100.) for tokens in tokens_per_block_scheme]
+            config['revival']['revive_ratio'] = [t1 - t2 for t1, t2 in zip(tokens_per_block_scheme, config['pruning']['prune_ratio'])]
+            acc1 = main(config)
+            print(f"\n🔥 Accuracy Top-1: {acc1 * 100:.3f}% | Hold %: {hold_percent}\n")
 
-        # Columnas: Pruning ratio, Filas: Revival ratio
-        df = pd.DataFrame(index=np.arange(0.1, 1., 0.1), columns=np.arange(0., 1., 0.1))
+            if acc1 > best_acc1:
+                best_acc1 = acc1
+                best_hold_percent = hold_percent
 
-        for revive_ratio in np.arange(0.1, 1., 0.1):
-            config['revival']['revive_ratio'] = revive_ratio
-            for pruning_ratio in np.arange(0., 1., 0.1):
-                config['pruning']['prune_ratio'] = pruning_ratio
-                acc1 = main(config)
-                df.at[revive_ratio, pruning_ratio] = round(acc1 * 100., 3)
-                print("\n\n", df, "\n\n")
+        print(f"\n🎯 Best Top-1 Acc for {pruning_schedule} at {budget_target} pruning: {best_acc1 * 100:.3f}% | Best Hold %: {best_hold_percent}\n")
+        
+    elif mode == 'selection policy grid search':
+        for budget_target in TOKENS_PER_BLOCK.keys():
+            for pruning_schedule in TOKENS_PER_BLOCK[budget_target].keys():
+                tokens_per_block_scheme = TOKENS_PER_BLOCK[budget_target][pruning_schedule]
+                best_hold_percent, best_acc1 = None, 0.
+                for hold_percent in range(75, 100, 1):
+                    config['pruning']['prune_ratio'] = [round(tokens * hold_percent / 100.) for tokens in tokens_per_block_scheme]
+                    config['revival']['revive_ratio'] = [t1 - t2 for t1, t2 in zip(tokens_per_block_scheme, config['pruning']['prune_ratio'])]
+                    acc1 = main(config)
+                    print(f"\n🔥 Accuracy Top-1: {acc1 * 100:.3f}% | Hold %: {hold_percent}\n")
 
-        print(df)
-        df.round(3).to_csv("deit_s_dtr_grid_search.csv")
+                    if acc1 > best_acc1:
+                        best_acc1 = acc1
+                        best_hold_percent = hold_percent
 
-    elif mode == 'pruning grid search':
-        # Asegurar que los tokens no puedan revivir
+                print(f"\n🎯 Best Top-1 Acc for {pruning_schedule} at {budget_target} pruning: {best_acc1 * 100:.3f}% | Best Hold %: {best_hold_percent}\n")
+
+    elif mode == 'pruning heuristic grid search':
+        table = pl.DataFrame(schema={"Budget Target": pl.Float64, "Pruning Criterion": pl.String, "Top-1 Accuracy": pl.Float64})
         config['run']['can_tokens_revive'] = False
-
-        # Columnas: Pruning ratio, Filas: Revival ratio
-        df = pd.DataFrame(index=np.arange(0.1, 1., 0.1), columns=np.arange(0., 1., 0.1))
-
-        for revive_ratio in np.arange(0.1, 1., 0.1):
-            for pruning_ratio in np.arange(0., 1., 0.1):
-                n_tokens = get_tokens_per_block(pruning_ratio, revive_ratio)
-                config['pruning']['prune_ratio'] = n_tokens
+        pruning_schedule = 'stepwise'
+        for budget_target in TOKENS_PER_BLOCK:
+            tokens_per_block_scheme = TOKENS_PER_BLOCK[budget_target][pruning_schedule]
+            for pruning_criterion in ['C1', 'C2', 'C3', 'C4']:
+                config['pruning']['pruning_criterion'] = pruning_criterion
+                config['pruning']['prune_ratio'] = tokens_per_block_scheme
                 acc1 = main(config)
-                df.at[revive_ratio, pruning_ratio] = round(acc1 * 100., 3)
-                print("\n\n", df, "\n\n")
+                print(f"\n🔥 Budget Target: {budget_target} | Pruning Criterion: {pruning_criterion} | Accuracy Top-1: {acc1 * 100:.3f}%\n")
+                table = pl.concat([table,
+                    pl.DataFrame({
+                    "Budget Target": [budget_target],
+                    "Pruning Criterion": [pruning_criterion],
+                    "Top-1 Accuracy": [acc1 * 100.]
+                })
+                ], how="vertical")
 
-        print(df)
-        df.round(3).to_csv("deit_s_pruning_grid_search.csv")
+        print("\n📊 Resultados del Grid Search de Heurísticas de Poda:")
+        print(table)
 
-    elif mode == "pruning with loc":
-        # Asegurar que los tokens no puedan revivir
-        config['run']['can_tokens_revive'] = False
-
-        # Columnas: Token keep ratio
-        df = pd.DataFrame(index=["Top-1 Accuracy (%)"], columns=np.arange(0.1, 1., 0.1))
-        
-        for pruning_ratio in np.arange(0.1, 1., 0.1):
-            n_tokens = get_tokens_per_block_with_pruning_loc(pruning_ratio, pruning_locs=(3, 6, 9))
-            config['pruning']['prune_ratio'] = n_tokens
-            print(f"Pruning ratio: {pruning_ratio} | Tokens per block: {n_tokens}")
-            acc1 = main(config)
-            df.at["Top-1 Accuracy (%)", pruning_ratio] = round(acc1 * 100., 3)
-            print("\n\n", df, "\n\n")
-
-    elif mode == "dtr with loc":
-        # Asegurar que los tokens puedan revivir
+    elif mode == 'revival heuristic grid search':
+        table = pl.DataFrame(schema={"Budget Target": pl.Float64, "Revival Criterion": pl.String, "Top-1 Accuracy": pl.Float64})
         config['run']['can_tokens_revive'] = True
+        config['pruning']['pruning_criterion'] = 'C2'
+        pruning_schedule = 'stepwise'
+        for budget_target in TOKENS_PER_BLOCK:
+            tokens_per_block_scheme = TOKENS_PER_BLOCK[budget_target][pruning_schedule]
+            for revival_criterion in ['C1', 'C2', 'C3', 'C4']:
+                config['revival']['revival_criterion'] = revival_criterion
+                config['pruning']['prune_ratio'] = [round(tokens * 0.8) for tokens in tokens_per_block_scheme]
+                config['revival']['revive_ratio'] = [t1 - t2 for t1, t2 in zip(tokens_per_block_scheme, config['pruning']['prune_ratio'])]
+                acc1 = main(config)
+                print(f"\n🔥 Budget Target: {budget_target} | Revival Criterion: {revival_criterion} | Accuracy Top-1: {acc1 * 100:.3f}%\n")
+                table = pl.concat([table,
+                    pl.DataFrame({
+                    "Budget Target": [budget_target],
+                    "Revival Criterion": [revival_criterion],
+                    "Top-1 Accuracy": [acc1 * 100.]
+                })
+                ], how="vertical")
 
-        # Columnas: Token keep ratio
-        df = pd.DataFrame(index=["Top-1 Accuracy (%)"], columns=np.arange(0.1, 1., 0.1))
-        
-        for revive_ratio in np.arange(0.1, 1., 0.1):
-            revive_ratio = 0.7
-            tokens_per_block = get_tokens_per_block_with_pruning_loc(revive_ratio, pruning_locs=(3, 6, 9))
-            tokens_per_block = [1.0, 1.0, 
-                                revive_ratio, revive_ratio, revive_ratio,
-                                revive_ratio ** 2, revive_ratio ** 2, revive_ratio ** 2,
-                                revive_ratio ** 3, revive_ratio ** 3, revive_ratio ** 3,]
-
-            # # 75% para desired_tokens_to_keep y 25% para desired_tokens_to_revive, ajustado para que el número total de tokens no exceda 197
-            # desired_tokens_to_keep = [int(tokens * 1.0) for tokens in tokens_per_block]
-            # desired_tokens_to_revive = [tokens - keep for tokens, keep in zip(tokens_per_block, desired_tokens_to_keep)]
-
-            # print(f"Pruning ratio: {revive_ratio:.1f} | Desired tokens to keep per block: {desired_tokens_to_keep} | Desired tokens to revive per block: {desired_tokens_to_revive}")
-
-            # config['pruning']['prune_ratio'] = desired_tokens_to_keep
-            # config['revival']['revive_ratio'] = desired_tokens_to_revive
-
-            config['revival']['revive_ratio'] = tokens_per_block
-            print(f"Revival ratio: {revive_ratio:.1f} | Tokens per block: {tokens_per_block}")
-            acc1 = main(config)
-            df.at["Top-1 Accuracy (%)", revive_ratio] = round(acc1 * 100., 3)
-            print("\n\n", df, "\n\n")
-
-    elif mode == "pruning with revive ratio fix":
-        # Asegurar que los tokens no puedan revivir
-        config['run']['can_tokens_revive'] = True
-
-        # Columnas: Token keep ratio
-        df = pd.DataFrame(index=["Top-1 Accuracy (%)"], columns=np.arange(0.0, 1., 0.1))
-        
-        for pruning_ratio in np.arange(0.0, 1., 0.1):
-            config['revival']['prune_ratio'] = pruning_ratio
-            # config['pruning']['prune_ratio'] = get_tokens_per_block(pruning_ratio, np.array(config['revival']['revive_ratio']))
-            acc1 = main(config)
-            df.at["Top-1 Accuracy (%)", pruning_ratio] = round(acc1 * 100., 3)
-            print("\n\n", df, "\n\n")
+        print("\n📊 Resultados del Grid Search de Heurísticas de Revivificación:")
+        print(table)
     else:
         raise ValueError(f"Modo desconocido: {mode}")
     

@@ -27,11 +27,6 @@ class HeuristicPruner(BasePruner):
             entropy = -(p * p.log()).sum(dim=-1)  # [B, N]
             scores = -entropy  # [B, N]
 
-        elif self.criterion == "C5": # Entrante + Saliente
-            incoming = attn_mean.sum(dim=1)  # [B, N]
-            outgoing = attn_mean.sum(dim=2)  # [B, N]
-            scores = incoming + outgoing  # [B, N]
-
         else:
             raise ValueError(f"Criterio desconocido: {self.criterion}")
 

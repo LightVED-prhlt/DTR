@@ -7,20 +7,18 @@ model:
   image_size: 224
 
 run:
-  mode: "pruning with revive ratio fix"
-  lr: 1e-5
+  mode: "revival heuristic grid search"
+  lr: 1.e-5
   batch_size: 256
-  can_tokens_revive: False
+  can_tokens_revive: True
 
 pruning:
-  prune_ratio: 0.0
+  prune_ratio: [196,171,149,130,113,98,86,75,65,57,49,43]
   pruning_criterion: C2
-  # prune_ratio_list: [196, 196, 196, 137, 137, 137, 96, 96, 96, 67, 67, 67] # Número de tokens restantes por capa (se debe usar un revive_ratio de 0.0)
 
 revival:
-  revive_ratio: 0.15
+  revive_ratio: [22,20,18,16,15,13,12,11,10,9,8,7]
   revival_criterion: C4
-  # revive_ratio_list: [196, 196, 196, 137, 137, 137, 96, 96, 96, 67, 67, 67] # Número de tokens a revivir por capa (se debe usar un prune_ratio de 1.0)
 
 dataset:
   name: imagenet1k

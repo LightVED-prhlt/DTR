@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List, Tuple
 
 import torch
 import torch.nn as nn
@@ -208,7 +208,7 @@ class DeiTRKT(nn.Module):
                     new_key = k
                 new_state_dict[new_key] = v
             
-            self.model.load_state_dict(new_state_dict)
+            self.model.load_state_dict(new_state_dict, strict=False)
             print(f"Pesos cargados desde el checkpoint: {self.checkpoint_path}")
         else:
             timm_model = timm.create_model(timm_model_name, pretrained=self.pretrained, num_classes=self.num_classes)
@@ -224,20 +224,13 @@ class DeiTRKT(nn.Module):
         """
         x = self.model(x)
         return x
-
-
-# Registered factories for timm
-# @register_model
-# def deit_tiny_rkt(pretrained: bool = False, num_classes: int = 1000, **kwargs) -> nn.Module:
-#     return DeiTRKT('tiny', num_classes=num_classes, pretrained=pretrained, **kwargs)
-
-
-# @register_model
-# def deit_small_rkt(pretrained: bool = False, num_classes: int = 1000, **kwargs) -> nn.Module:
-#     return DeiTRKT('small', num_classes=num_classes, pretrained=pretrained, **kwargs)
-
-
-# @register_model
-# def deit_base_rkt(pretrained: bool = False, num_classes: int = 1000, **kwargs) -> nn.Module:
-#     return DeiTRKT('base', num_classes=num_classes, pretrained=pretrained, **kwargs)
+    
+    def forward_features_saving_stats(self, x: torch.Tensor) -> List[Tuple[int, List[int], List[int]]]:
+        return self.model.forward_features_saving_stats(x)
+    
+    def visualize_attention(self, x: torch.Tensor) -> List[torch.Tensor]:
+        return self.model.visualize_attention(x)
+    
+    def keep_probabilities(self, x: torch.Tensor) -> List[torch.Tensor]:
+        return self.model.keep_probabilities(x)
     

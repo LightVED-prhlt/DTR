@@ -69,6 +69,3 @@ class BaseRevivor(ABC):
             revive_tokens[i] = torch.scatter(revive_tokens[i], 0, topk_idx, True)
 
         return revive_tokens
-    
-    def __call__(self, *args, **kwds):
-        return self.revive(*args, **kwds)

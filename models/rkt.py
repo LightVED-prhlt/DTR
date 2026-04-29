@@ -52,7 +52,7 @@ class AttentionRKT(Attention):
 
         attn = torch.matmul(q, k.transpose(-2, -1))  # [B, num_heads, N, N]
 
-        # # Aplicar máscara eficientemente
+        # Aplicar máscara eficientemente
         # # Basándote en attn_mask, calcular con cuántos tokens vivos se calcula la atención
         # if attn_mask is not None:
         #     # attn_mask: [B, 1, N, N] con 0=vivo, !=0=descartado
@@ -77,13 +77,28 @@ class AttentionRKT(Attention):
         x_out = self.proj(x_out)
         x_out = self.proj_drop(x_out)
 
-        if current_block_attn_mask is None:
-            if attn_mask is None:
-                current_block_attn_mask = torch.zeros((B, 1, N, N), dtype=torch.bool, device=x.device)
-            else:
-                current_block_attn_mask = attn_mask.to(torch.bool)
-
         return x_out, current_block_attn_mask
+
+    def forward_for_only_attn_mask(self, x: torch.Tensor, attn_mask: torch.Tensor) -> torch.Tensor:
+        """Forward que solo calcula la máscara de atención sin modificar x."""
+        B, N, C = x.shape
+
+        qkv = self.qkv(x)
+        qkv = qkv.reshape(B, N, 3, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
+        q, k, v = qkv.unbind(0)
+
+        q = self.q_norm(q)
+        k = self.k_norm(k)
+        q = q * self.scale
+
+        attn = torch.matmul(q, k.transpose(-2, -1))  # [B, num_heads, N, N]
+
+        # No necesitamos calcular softmax ni salida final aquí
+        current_block_attn_mask = None
+        if self.token_manager is not None:
+            current_block_attn_mask = self.token_manager.revive_2(attn.detach(), attn_mask)
+
+        return current_block_attn_mask
 
 
 class BlockRKT(Block):
@@ -131,6 +146,11 @@ class BlockRKT(Block):
         x = residual + self.drop_path2(x_mlp)
 
         return x, current_block_attn_mask
+    
+    def forward_for_only_attn_mask(self, x: torch.Tensor, attn_mask: torch.Tensor) -> torch.Tensor:
+        # Solo calcular la máscara de atención sin modificar x
+        current_block_attn_mask = self.attn.forward_for_only_attn_mask(x, attn_mask)
+        return current_block_attn_mask
 
 
 class VisionTransformerRKT(VisionTransformer):
@@ -174,7 +194,7 @@ class VisionTransformerRKT(VisionTransformer):
             self.token_manager.mode = "train" if mode else "eval"
         return self
 
-    def forward_features_saving_stats(self, x: torch.Tensor) -> torch.Tensor:
+    def forward_features_saving_stats(self, x: torch.Tensor) -> List[Tuple[int, List[int], List[int]]]:
         """Forward que guarda estadísticas mínimas sin pandas y con pocas allocs."""
         x = self.patch_embed(x)
         x = self._pos_embed(x)
@@ -199,7 +219,8 @@ class VisionTransformerRKT(VisionTransformer):
             attn_mask = attn_mask | current_block_attn_mask
 
             # pass detached tensors to token_manager to avoid building graph there
-            revived = self.token_manager.revive(x[:, 0, :].detach(), dead_tokens.detach(), attn_mask) if self.token_manager is not None else torch.zeros((B, N), dtype=torch.bool, device=x.device)
+            alive_tokens = torch.where(attn_mask[:, 0, 0, :].unsqueeze(-1).expand(-1, -1, D), torch.full_like(x, float('nan')), x)
+            revived = self.token_manager.revive(x[:, 0, :].detach(), dead_tokens.detach(), alive_tokens, attn_mask) if self.token_manager is not None else torch.zeros((B, N), dtype=torch.bool, device=x.device)
 
             if revived.any():
                 revived_exp = revived.unsqueeze(-1).expand(-1, -1, D)
@@ -216,14 +237,90 @@ class VisionTransformerRKT(VisionTransformer):
 
         x = self.norm(x)
 
-        # write compact CSV
-        with open('token_stats_3.csv', 'w', newline='') as csvfile:
-            writer = csv.writer(csvfile)
-            writer.writerow(['block', 'attn_mask_bits', 'revived_bits'])
-            for block_idx, att_bits, rev_bits in stats_rows:
-                writer.writerow([block_idx, ''.join(map(str, att_bits)), ''.join(map(str, rev_bits))])
+        return stats_rows
+    
+    def visualize_attention(self, x: torch.Tensor) -> List[torch.Tensor]:
+        """Forward que devuelve mapas de atención para visualización."""
+        x = self.patch_embed(x)
+        x = self._pos_embed(x)
+        x = self.patch_drop(x)
+        x = self.norm_pre(x)
 
-        exit()
+        B, N, D = x.shape
+        attn_mask = torch.zeros((B, 1, N, N), dtype=torch.bool, device=x.device)
+        dead_tokens = torch.full((B, N, D), float('nan'), device=x.device)
+
+        attn_maps: List[torch.Tensor] = [attn_mask[..., 0, 0, :].clone().float().squeeze().cpu()]
+
+        for blk in self.blocks:
+            x, current_block_attn_mask = blk(x, attn_mask=attn_mask)
+
+            cur_mask_1d = current_block_attn_mask[:, 0, 0, :].to(torch.bool)
+            if cur_mask_1d.any():
+                mask_exp = cur_mask_1d.unsqueeze(-1).expand(-1, -1, D)
+                # store detached copies of dead tokens to break backward flow
+                dead_tokens = torch.where(mask_exp, x.detach(), dead_tokens)
+
+            attn_mask = attn_mask | current_block_attn_mask
+
+            # pass detached tensors to token_manager to avoid building graph there
+            alive_tokens = torch.where(attn_mask[:, 0, 0, :].unsqueeze(-1).expand(-1, -1, D), torch.full_like(x, float('nan')), x)
+            revived = self.token_manager.revive(x[:, 0, :].detach(), dead_tokens.detach(), alive_tokens, attn_mask) if self.token_manager is not None else torch.zeros((B, N), dtype=torch.bool, device=x.device)
+
+            if revived.any():
+                revived_exp = revived.unsqueeze(-1).expand(-1, -1, D)
+                # use detached dead_tokens when copying back into x
+                x = torch.where(revived_exp, dead_tokens.detach(), x)
+                rev_4d = revived.unsqueeze(1).unsqueeze(2).expand(B, 1, N, N)
+                attn_mask = attn_mask ^ rev_4d
+                dead_tokens = torch.where(revived_exp, torch.full_like(dead_tokens, float('nan')), dead_tokens)
+
+            attn_maps.append(attn_mask[..., 0, 0, :].clone().float().squeeze().cpu())
+
+        return attn_maps
+
+    def keep_probabilities(self, x: torch.Tensor) -> List[torch.Tensor]:
+        """Forward que devuelve mapas de atención para visualización."""
+        x = self.patch_embed(x)
+        x = self._pos_embed(x)
+        x = self.patch_drop(x)
+        x = self.norm_pre(x)
+
+        B, N, D = x.shape
+        attn_mask = torch.zeros((B, 1, N, N), dtype=torch.bool, device=x.device)
+        dead_tokens = torch.full((B, N, D), float('nan'), device=x.device)
+
+        attn_maps: List[torch.Tensor] = []
+
+        for blk in self.blocks:
+            x, current_block_attn_mask = blk(x, attn_mask=attn_mask)
+
+            if self.can_tokens_revive:
+                cur_mask_1d = current_block_attn_mask[:, 0, 0, :]
+                if cur_mask_1d.any():
+                    detached_x = x.detach()
+                    mask_exp = cur_mask_1d.unsqueeze(-1).expand(-1, -1, D)
+                    # store detached copies of dead tokens to break backward flow
+                    dead_tokens = torch.where(mask_exp, detached_x, dead_tokens)
+
+            attn_mask = attn_mask | current_block_attn_mask
+
+            if self.can_tokens_revive:
+                # pass detached tensors to token_manager to avoid building graph there
+                alive_tokens = torch.where(attn_mask[:, 0, 0, :].unsqueeze(-1).expand(-1, -1, D), torch.full_like(x, float('nan')), x)
+                revived = self.token_manager.revive(x[:, 0, :].detach(), dead_tokens.detach(), alive_tokens, attn_mask) if self.token_manager is not None else torch.zeros((B, N), dtype=torch.bool, device=x.device)
+
+                if revived.any():
+                    revived_exp = revived.unsqueeze(-1).expand(-1, -1, D)
+                    # use detached dead_tokens when copying back into x
+                    x = torch.where(revived_exp, dead_tokens.detach(), x)
+                    rev_4d = revived.unsqueeze(1).unsqueeze(2).expand(B, 1, N, N)
+                    attn_mask = attn_mask ^ rev_4d
+                    dead_tokens = torch.where(revived_exp, torch.full_like(dead_tokens, float('nan')), dead_tokens)
+
+            attn_maps.append(attn_mask[..., 0, 0, :].clone().float().squeeze().cpu())
+
+        return attn_maps
 
     def forward_features(self, x: torch.Tensor, can_tokens_revive: bool) -> torch.Tensor:
         x = self.patch_embed(x)
@@ -258,7 +355,39 @@ class VisionTransformerRKT(VisionTransformer):
 
         x = self.norm(x)
 
-        # exit()
+        return x
+    
+    def forward_features_2(self, x: torch.Tensor, can_tokens_revive: bool) -> torch.Tensor:
+        x = self.patch_embed(x)
+        x = self._pos_embed(x)
+        x = self.patch_drop(x)
+        x = self.norm_pre(x)
+
+        B, N, D = x.shape
+        attn_mask = torch.zeros((B, 1, N, N), dtype=torch.bool, device=x.device)
+        dead_tokens = torch.full((B, N, D), float('nan'), device=x.device)
+
+        for blk in self.blocks:
+            x, current_block_attn_mask = blk(x, attn_mask=attn_mask)
+
+            if can_tokens_revive:
+                cur_mask_1d = current_block_attn_mask[:, 0, 0, :].to(torch.bool)
+                if cur_mask_1d.any():
+                    mask_exp = cur_mask_1d.unsqueeze(-1).expand(-1, -1, D)
+                    dead_tokens = torch.where(mask_exp, x.detach(), dead_tokens)
+
+            attn_mask = attn_mask | current_block_attn_mask
+
+            if can_tokens_revive:
+                revived_tokens = blk.forward_for_only_attn_mask(dead_tokens, attn_mask)
+                if revived_tokens.any():
+                    revived_exp = revived_tokens.unsqueeze(-1).expand(-1, -1, D)
+                    x = torch.where(revived_exp, dead_tokens.detach(), x)
+                    rev_4d = revived_tokens.unsqueeze(1).unsqueeze(2).expand(B, 1, N, N)
+                    attn_mask = attn_mask ^ rev_4d
+                    dead_tokens = torch.where(revived_exp, torch.full_like(dead_tokens, float('nan')), dead_tokens)
+
+        x = self.norm(x)
 
         return x
 

@@ -10,8 +10,7 @@ from datetime import datetime
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.optim.lr_scheduler import CosineAnnealingLR, SequentialLR, LinearLR
-from cosine_annealing_warmup import CosineAnnealingWarmupRestarts
+from torch.optim.lr_scheduler import CosineAnnealingLR
 
 from timm import create_model
 from timm.data.mixup import Mixup
@@ -20,7 +19,6 @@ from timm.loss import SoftTargetCrossEntropy
 import lightning as L
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
-from lightning.pytorch.tuner import Tuner
 
 from torchmetrics.classification import MulticlassAccuracy
 
@@ -288,6 +286,7 @@ def main(config):
 
     # --- WandB logger
     experiment_name = generate_run_name(config)
+    print(f"🚀 Iniciando experimento: {experiment_name}\n")
     wandb_logger = WandbLogger(
         project=run_cfg['wandb_project'],
         name=experiment_name,

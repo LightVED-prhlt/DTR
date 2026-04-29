@@ -10,7 +10,7 @@ model:
 run:
   batch_size: 256
   lr: 1.e-5
-  max_epochs: 30
+  max_epochs: 15
   can_tokens_revive: false
   simulate_revival: true
   wandb_project: "TokenAdaptation"
@@ -22,7 +22,6 @@ run:
     weight: 0.5
     temp: 4.0
 
-
 pruning:
   prune_ratio: 0.7
   pruning_criterion: C2
@@ -30,7 +29,6 @@ pruning:
 revival:
   revive_ratio: 0.15
   revival_criterion: C4
-  # revive_ratio_list: [196, 196, 196, 137, 137, 137, 96, 96, 96, 67, 67, 67] # Número de tokens a revivir por capa
 
 dataset:
   name: imagenet1k

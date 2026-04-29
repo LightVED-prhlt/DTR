@@ -91,13 +91,4 @@ class TokenManager:
 
         revived_tokens = self.revivor.revive(cls_emb, dead_tokens, alive_tokens, attn_mask, ratio_or_n_tokens=self.next_n_tokens_for_revive(self.revive_ratio_or_n_tokens))
 
-        # Only for stats
-        # 0=vivo, 1=descartado
-        # self.stats.append({
-        #     'tokens_alive_before_revival': attn_mask[0, 0, 0].numel() - attn_mask[0, 0, 0].sum().item(),
-        #     'pruned': attn_mask[0, 0, 0].sum().item(),
-        #     'tokens_alive_after_revival': attn_mask[0, 0, 0].numel() - attn_mask[0, 0, 0].sum().item() + revived_tokens[0].sum().item(),
-        #     'revived': revived_tokens[0].sum().item(),
-        # })
-
-        return revived_tokens
+        return revived_tokens        

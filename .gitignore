@@ -18,3 +18,4 @@ wandb_logs/
 *.pdf
 *.csv
 *.png
+# *.jpg
