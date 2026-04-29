@@ -296,9 +296,7 @@ The [tools/](tools/) folder contains notebooks/scripts for analysis and figures 
 
 - Notebooks
 	- [tools/token_visualization.ipynb](tools/token_visualization.ipynb): visualizes the pruning evolution per block overlaid on images (exports PDFs as `pruning_evolution_*.pdf`). Uses [tools/imgs/](tools/imgs/) as an example.
-	- [tools/keep_token_prob_heatmap.ipynb](tools/keep_token_prob_heatmap.ipynb): estimates the average probability of "keeping a token" per block and draws it as heatmaps (exports `keep_token_prob_heatmap_*.pdf`).
 	- [tools/token_stats.ipynb](tools/token_stats.ipynb): executes a forward pass saving events (active/pruned/revived) and draws an event matrix (exports `token_stats.pdf`).
-	- [tools/best_pruning_heuristic.ipynb](tools/best_pruning_heuristic.ipynb): minimal sandbox to load dataset/model with a schedule and test heuristics.
 
 - Scripts
 	- [tools/pruning_scheds.py](tools/pruning_scheds.py): generates figures of pruning schedules and an 80/20-like decomposition (exports `pruning_schedules*.pdf`).
