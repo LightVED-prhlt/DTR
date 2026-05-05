@@ -107,8 +107,8 @@ imagenet/
 ## Downloading the Repository
 
 ```bash
-git clone <REPO_URL>
-cd <REPO_FOLDER>/mycode
+git clone https://github.com/LightVED-prhlt/DTR.git
+cd DTR
 ```
 
 ## Installation with uv (reproducible environment)
