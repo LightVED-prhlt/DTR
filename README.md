@@ -1,8 +1,8 @@
 # Dynamic Token Revival — Training/Evaluation Code
 
-- Paper / preprint: <LINK>
-- Official page / project: <LINK>
-- Weights / checkpoints: <LINK>
+- Paper / preprint: [SOON] (will be added here once available).
+- Official page / project: [SOON] (will be added here once available).
+- Weights / checkpoints: [OneDrive](https://upvedues-my.sharepoint.com/:f:/g/personal/ljmarten_upv_edu_es/IgBLehlcuadLRo1t_R7XBzHNAYEKH78w175SWlHgNybqHzI?e=wbGEb2)
 
 ## Contents
 - [Repository Structure](#repository-structure)
